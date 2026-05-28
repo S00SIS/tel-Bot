@@ -1,11 +1,10 @@
 name: Telegram Proxy Bot
 
-# تعیین زمان اجرا (هر ۲ دقیقه یکبار)
 on:
   schedule:
-    - cron: '*/2 * * * *'
-  workflow_dispatch:  # برای اجرای دستی
-
+    - cron: '0 */6 * * *'
+  workflow_dispatch:
+  
 jobs:
   run-bot:
     runs-on: ubuntu-latest
