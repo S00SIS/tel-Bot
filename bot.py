@@ -64,8 +64,6 @@ def send_configs_in_chunks(chat_id, configs, total_count):
 def main():
     configs = get_configs()
     last_update_id = 0
-    welcome_message_id = None
-    welcome_chat_id = None
     
     while True:
         check_time()
@@ -80,13 +78,22 @@ def main():
                 check_time()
                 last_update_id = update['update_id']
                 
-                if 'message' in update:
-                    msg = update['message']
-                    chat_id = msg['chat']['id']
-                    text = msg.get('text', '')
-                    
-                    if text == '/start':
-                        welcome_text = f"""🎯 به ربات کانفیگ خوش آمدید!
+                # فقط پیام‌های واقعی رو پردازش کن (نه چیز دیگه)
+                if 'message' not in update:
+                    continue
+                
+                msg = update['message']
+                
+                # اگه پیام بدون متن بود، رد کن
+                if 'text' not in msg:
+                    continue
+                
+                chat_id = msg['chat']['id']
+                text = msg.get('text', '')
+                
+                # پردازش دستور start
+                if text == '/start':
+                    welcome_text = f"""🎯 به ربات کانفیگ خوش آمدید!
 
 این ربات به شما امکان دریافت کانفیگ‌های دلخواه را می‌دهد.
 
@@ -100,50 +107,43 @@ def main():
 
 برای شروع، روی دکمه پایین صفحه کلیک کنید."""
 
-                        # دکمه دائمی (صفحه کلید سفارشی)
-                        reply_keyboard = {
-                            "keyboard": [
-                                [{"text": "📡 درخواست کانفیگ"}]
-                            ],
-                            "resize_keyboard": True,
-                            "one_time_keyboard": False
-                        }
-                        
-                        # ارسال پیام خوش‌آمدگویی
-                        result = send_message(chat_id, welcome_text, reply_markup=reply_keyboard)
-                        
-                        # پین کردن پیام خوش‌آمدگویی
-                        if result and 'result' in result:
-                            message_id = result['result']['message_id']
-                            pin_message(chat_id, message_id)
+                    reply_keyboard = {
+                        "keyboard": [
+                            [{"text": "📡 درخواست کانفیگ"}]
+                        ],
+                        "resize_keyboard": True,
+                        "one_time_keyboard": False
+                    }
                     
-                    elif text == "📡 درخواست کانفیگ":
-                        send_message(chat_id, f"🔢 چند تا کانفیگ میخوای؟ (عدد بین 1 تا 50)\n\n📊 {len(configs)} کانفیگ در مخزن موجود است.\n\n⚠️ کانفیگ‌ها در گروه‌های ۱۰ تایی ارسال می‌شوند.")
+                    result = send_message(chat_id, welcome_text, reply_markup=reply_keyboard)
                     
-                    elif text.isdigit():
-                        count = int(text)
-                        if 1 <= count <= 50:
-                            if count > len(configs):
-                                send_message(chat_id, f"⚠️ فقط {len(configs)} کانفیگ در مخزن موجود است. همین تعداد ارسال می‌شود.")
-                                count = len(configs)
-                            
-                            selected = random.sample(configs, count)
-                            send_message(chat_id, f"✅ {count} کانفیگ درخواستی شما در حال ارسال است...")
-                            time.sleep(0.5)
-                            send_configs_in_chunks(chat_id, selected, count)
-                            send_message(chat_id, f"✨ ارسال {count} کانفیگ به پایان رسید.")
-                        else:
-                            send_message(chat_id, "❌ لطفاً عددی بین 1 تا 50 وارد کنید.")
-                    elif text != '/start' and text != "📡 درخواست کانفیگ":
-                        send_message(chat_id, "❌ لطفاً یک عدد معتبر وارد کنید.\n\nبرای شروع /start را بزنید یا از دکمه پایین صفحه استفاده کنید.")
+                    if result and 'result' in result:
+                        message_id = result['result']['message_id']
+                        pin_message(chat_id, message_id)
                 
-                elif 'callback_query' in update:
-                    # برای پشتیبانی از دکمه شیشه‌ای اگه کسی استفاده کرد
-                    query = update['callback_query']
-                    chat_id = query['message']['chat']['id']
-                    query_id = query['id']
-                    requests.get(f"https://api.telegram.org/bot{TOKEN}/answerCallbackQuery?callback_query_id={query_id}")
-                    send_message(chat_id, f"🔢 چند تا کانفیگ میخوای؟ (عدد بین 1 تا 50)\n\n📊 {len(configs)} کانفیگ در مخزن موجود است.")
+                # پردازش دکمه دائمی
+                elif text == "📡 درخواست کانفیگ":
+                    send_message(chat_id, f"🔢 چند تا کانفیگ میخوای؟ (عدد بین 1 تا 50)\n\n📊 {len(configs)} کانفیگ در مخزن موجود است.\n\n⚠️ کانفیگ‌ها در گروه‌های ۱۰ تایی ارسال می‌شوند.")
+                
+                # پردازش عدد (تعداد کانفیگ)
+                elif text.isdigit():
+                    count = int(text)
+                    if 1 <= count <= 50:
+                        if count > len(configs):
+                            send_message(chat_id, f"⚠️ فقط {len(configs)} کانفیگ در مخزن موجود است. همین تعداد ارسال می‌شود.")
+                            count = len(configs)
+                        
+                        selected = random.sample(configs, count)
+                        send_message(chat_id, f"✅ {count} کانفیگ درخواستی شما در حال ارسال است...")
+                        time.sleep(0.5)
+                        send_configs_in_chunks(chat_id, selected, count)
+                        send_message(chat_id, f"✨ ارسال {count} کانفیگ به پایان رسید.")
+                    else:
+                        send_message(chat_id, "❌ لطفاً عددی بین 1 تا 50 وارد کنید.")
+                
+                # هر چیز دیگه ای (نه start، نه دکمه، نه عدد)
+                else:
+                    send_message(chat_id, "❌ لطفاً یک عدد معتبر وارد کنید.\n\nبرای شروع /start را بزنید یا از دکمه پایین صفحه استفاده کنید.")
             
             time.sleep(1)
             
