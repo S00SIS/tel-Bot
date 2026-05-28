@@ -1,23 +1,33 @@
-name: Telegram Proxy Bot
+name: Telegram Proxy Bot - Always On
 
 on:
-  schedule:
-    - cron: '0 */6 * * *'
-  workflow_dispatch:
-  
+  workflow_dispatch:  # فقط اجرای دستی
+  push:
+    branches: [ main ]
+
 jobs:
   run-bot:
     runs-on: ubuntu-latest
+    timeout-minutes: 360  # حداکثر 6 ساعت (حداکثر مجاز گیت‌هاب)
+    
     steps:
     - name: Checkout code
       uses: actions/checkout@v4
+      
     - name: Set up Python
       uses: actions/setup-python@v4
       with:
         python-version: '3.9'
+        
     - name: Install dependencies
       run: pip install requests
-    - name: Run the bot
+      
+    - name: Run bot continuously
       env:
         TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
-      run: python bot.py
+      run: |
+        while true; do
+          python bot.py
+          echo "ربات متوقف شد، دوباره اجرا می‌شود..."
+          sleep 5
+        done
