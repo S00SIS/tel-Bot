@@ -25,9 +25,20 @@ def send_message(chat_id, text, reply_markup=None):
     if reply_markup:
         payload['reply_markup'] = json.dumps(reply_markup)
     try:
-        requests.post(url, json=payload, timeout=10)
+        response = requests.post(url, json=payload, timeout=10)
+        return response.json()
     except Exception as e:
         print(f"Error sending message: {e}")
+        return None
+
+def pin_message(chat_id, message_id):
+    """پین کردن پیام"""
+    url = f"https://api.telegram.org/bot{TOKEN}/pinChatMessage"
+    payload = {'chat_id': chat_id, 'message_id': message_id, 'disable_notification': True}
+    try:
+        requests.post(url, json=payload, timeout=10)
+    except Exception as e:
+        print(f"Error pinning message: {e}")
 
 def send_configs_in_chunks(chat_id, configs, total_count):
     """ارسال کانفیگ‌ها در گروه‌های 10 تایی"""
@@ -39,23 +50,22 @@ def send_configs_in_chunks(chat_id, configs, total_count):
         end = start + chunk_size
         chunk = configs[start:end]
         
-        # ساخت پیام برای این گروه
         if num_chunks == 1:
-            # اگر همه کانفیگ‌ها توی یه پیام جا بشن
             message = "\n".join(chunk)
         else:
-            # گروه چندتایی
             if i == 0:
                 message = f"📦 بخش {i+1} از {num_chunks} (کانفیگ {start+1} تا {min(end, total_count)}):\n\n" + "\n".join(chunk)
             else:
                 message = f"\n📦 بخش {i+1} از {num_chunks} (کانفیگ {start+1} تا {min(end, total_count)}):\n\n" + "\n".join(chunk)
         
         send_message(chat_id, message)
-        time.sleep(0.5)  # کمی تاخیر بین پیام‌ها برای جلوگیری از محدودیت تلگرام
+        time.sleep(0.5)
 
 def main():
     configs = get_configs()
     last_update_id = 0
+    welcome_message_id = None
+    welcome_chat_id = None
     
     while True:
         check_time()
@@ -81,21 +91,34 @@ def main():
 این ربات به شما امکان دریافت کانفیگ‌های دلخواه را می‌دهد.
 
 📌 نحوه استفاده:
-1️⃣ روی دکمه "📡 درخواست کانفیگ" کلیک کنید
-2️⃣ تعداد کانفیگ مورد نیاز خود را وارد کنید (عدد بین 1 تا 50)
+✅ روی دکمه "📡 درخواست کانفیگ" که پایین صفحه قرار دارد کلیک کنید
+✅ سپس تعداد کانفیگ مورد نیاز خود را وارد کنید (عدد بین 1 تا 50)
 
 📊 آمار فعلی: {len(configs)} کانفیگ در مخزن موجود است.
 
 ⚠️ نکته: کانفیگ‌ها در گروه‌های ۱۰ تایی برای شما ارسال می‌شوند.
 
-لطفاً برای شروع، روی دکمه زیر کلیک کنید."""
-                        
-                        keyboard = {
-                            "inline_keyboard": [[
-                                {"text": "📡 درخواست کانفیگ", "callback_data": "config"}
-                            ]]
+برای شروع، روی دکمه پایین صفحه کلیک کنید."""
+
+                        # دکمه دائمی (صفحه کلید سفارشی)
+                        reply_keyboard = {
+                            "keyboard": [
+                                [{"text": "📡 درخواست کانفیگ"}]
+                            ],
+                            "resize_keyboard": True,
+                            "one_time_keyboard": False
                         }
-                        send_message(chat_id, welcome_text, reply_markup=keyboard)
+                        
+                        # ارسال پیام خوش‌آمدگویی
+                        result = send_message(chat_id, welcome_text, reply_markup=reply_keyboard)
+                        
+                        # پین کردن پیام خوش‌آمدگویی
+                        if result and 'result' in result:
+                            message_id = result['result']['message_id']
+                            pin_message(chat_id, message_id)
+                    
+                    elif text == "📡 درخواست کانفیگ":
+                        send_message(chat_id, f"🔢 چند تا کانفیگ میخوای؟ (عدد بین 1 تا 50)\n\n📊 {len(configs)} کانفیگ در مخزن موجود است.\n\n⚠️ کانفیگ‌ها در گروه‌های ۱۰ تایی ارسال می‌شوند.")
                     
                     elif text.isdigit():
                         count = int(text)
@@ -104,29 +127,23 @@ def main():
                                 send_message(chat_id, f"⚠️ فقط {len(configs)} کانفیگ در مخزن موجود است. همین تعداد ارسال می‌شود.")
                                 count = len(configs)
                             
-                            # انتخاب رندوم کانفیگ‌ها
                             selected = random.sample(configs, count)
-                            
-                            # ارسال اولیه (اعلام تعداد کل)
                             send_message(chat_id, f"✅ {count} کانفیگ درخواستی شما در حال ارسال است...")
                             time.sleep(0.5)
-                            
-                            # ارسال گروهی کانفیگ‌ها
                             send_configs_in_chunks(chat_id, selected, count)
-                            
-                            # پیام پایان
                             send_message(chat_id, f"✨ ارسال {count} کانفیگ به پایان رسید.")
                         else:
                             send_message(chat_id, "❌ لطفاً عددی بین 1 تا 50 وارد کنید.")
-                    elif text != '/start':
-                        send_message(chat_id, "❌ لطفاً یک عدد معتبر وارد کنید.\n\nبرای شروع مجدد /start را بزنید.")
+                    elif text != '/start' and text != "📡 درخواست کانفیگ":
+                        send_message(chat_id, "❌ لطفاً یک عدد معتبر وارد کنید.\n\nبرای شروع /start را بزنید یا از دکمه پایین صفحه استفاده کنید.")
                 
                 elif 'callback_query' in update:
+                    # برای پشتیبانی از دکمه شیشه‌ای اگه کسی استفاده کرد
                     query = update['callback_query']
                     chat_id = query['message']['chat']['id']
                     query_id = query['id']
                     requests.get(f"https://api.telegram.org/bot{TOKEN}/answerCallbackQuery?callback_query_id={query_id}")
-                    send_message(chat_id, f"🔢 چند تا کانفیگ میخوای؟ (عدد بین 1 تا 50)\n\n📊 {len(configs)} کانفیگ در مخزن موجود است.\n\n⚠️ کانفیگ‌ها در گروه‌های ۱۰ تایی ارسال می‌شوند.")
+                    send_message(chat_id, f"🔢 چند تا کانفیگ میخوای؟ (عدد بین 1 تا 50)\n\n📊 {len(configs)} کانفیگ در مخزن موجود است.")
             
             time.sleep(1)
             
