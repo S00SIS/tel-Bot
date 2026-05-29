@@ -349,7 +349,7 @@ def main():
                     setattr(process_donated_configs, 'timer_' + str(user_id), timer)
                     
                     # پیام موقت
-                    send_message(chat_id, f"⏳ {len(user_message_buffer[user_id])} کانفیگ دریافت شد. در حال ذخیره‌سازی...")
+                    send_message(chat_id, f"⏳ {len(user_message_buffer[user_id])} پیام دریافت شد. در حال ذخیره‌سازی...")
                 
                 # هر چیز دیگه
                 else:
