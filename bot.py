@@ -6,14 +6,20 @@ import json
 import sys
 import math
 import subprocess
+from collections import deque
+from threading import Timer
 
 TOKEN = os.environ.get('TELEGRAM_BOT_TOKEN')
 START_TIME = time.time()
 MAX_RUNTIME = 6 * 60 * 60
 
 # مسیر فایل‌ها
-DONATED_FILE = 'donated.txt'      # کانفیگ‌های اهدایی
-MAIN_FILE = 'proxy.txt'           # کانفیگ‌های اصلی (دلتا)
+DONATED_FILE = 'donated.txt'
+MAIN_FILE = 'proxy.txt'
+
+# ذخیره پیام‌های کاربر برای پردازش گروهی
+user_message_buffer = {}
+BUFFER_TIMEOUT = 3  # 3 ثانیه صبر کن تا پیام‌های بعدی برسن
 
 def check_time():
     if time.time() - START_TIME > MAX_RUNTIME:
@@ -21,35 +27,26 @@ def check_time():
         sys.exit(0)
 
 def get_configs(file_path):
-    """خواندن کانفیگ‌ها از فایل"""
     try:
         with open(file_path, 'r') as f:
             return [line.strip() for line in f if line.strip()]
     except FileNotFoundError:
         return []
 
-def save_config(file_path, config):
-    """ذخیره کانفیگ جدید در فایل"""
+def save_multiple_configs(file_path, configs_list):
+    """ذخیره چندین کانفیگ در فایل"""
     with open(file_path, 'a') as f:
-        f.write(config.strip() + '\n')
+        for config in configs_list:
+            if config.strip():
+                f.write(config.strip() + '\n')
 
-def git_commit_and_push(file_path, config_text):
-    """کامیت و پوش کردن تغییرات به گیت‌هاب"""
+def git_commit_and_push(file_path, count):
     try:
-        # تنظیم git user (برای ورک‌فلو گیت‌هاب)
         subprocess.run(['git', 'config', 'user.name', 'Telegram Bot'], check=False)
         subprocess.run(['git', 'config', 'user.email', 'bot@telegram.com'], check=False)
-        
-        # اضافه کردن فایل به git
         subprocess.run(['git', 'add', file_path], check=False)
-        
-        # کامیت کردن
-        commit_msg = f"Add donated config: {config_text[:50]}..."
-        subprocess.run(['git', 'commit', '-m', commit_msg], check=False)
-        
-        # پوش به مخزن
+        subprocess.run(['git', 'commit', '-m', f'Add {count} donated configs'], check=False)
         subprocess.run(['git', 'push'], check=False)
-        
         return True
     except Exception as e:
         print(f"Git error: {e}")
@@ -76,7 +73,6 @@ def pin_message(chat_id, message_id):
         print(f"Error pinning message: {e}")
 
 def send_configs_in_chunks(chat_id, configs, total_count, source_name):
-    """ارسال کانفیگ‌ها در گروه‌های 10 تایی با نام منبع"""
     if not configs:
         send_message(chat_id, f"❌ متاسفانه هیچ کانفیگی در بخش {source_name} موجود نیست.")
         return
@@ -104,9 +100,67 @@ def send_configs_in_chunks(chat_id, configs, total_count, source_name):
         time.sleep(0.5)
     
     send_message(chat_id, f"✨ ارسال {len(configs)} کانفیگ از {source_name} به پایان رسید.")
+    
+    # ارسال پیام درخواست اهدا
+    send_donation_request(chat_id)
+
+def send_donation_request(chat_id):
+    """ارسال پیام درخواست اهدای کانفیگ"""
+    donation_text = """💝 کمک به دسترسی آزاد به اینترنت
+
+اگر شما ساب لینک‌ها یا کانفیگ‌های سالمی را تست می‌کنید، لطفاً آنها را به این ربات اهدا کنید.
+
+📌 نحوه اهدا:
+کانفیگ‌های خود را (هر خط یک کانفیگ) در یک پیام برای ربات ارسال کنید.
+
+✅ با اهدای کانفیگ‌های سالم، به دیگران در دسترسی آزاد به اینترنت کمک می‌کنید.
+
+🙏 ممنون از همکاری شما"""
+    
+    send_message(chat_id, donation_text)
+
+def process_donated_configs(chat_id, configs_text):
+    """پردازش کانفیگ‌های اهدایی با تاخیر"""
+    # جدا کردن خطوط
+    lines = [line.strip() for line in configs_text.split('\n') if line.strip() and not line.strip().startswith('/')]
+    
+    if not lines:
+        return
+    
+    # ذخیره همه کانفیگ‌ها
+    save_multiple_configs(DONATED_FILE, lines)
+    
+    # کامیت به گیت‌هاب
+    git_commit_and_push(DONATED_FILE, len(lines))
+    
+    # آمار جدید
+    total_donated = len(get_configs(DONATED_FILE))
+    
+    # ارسال پیام تشکر
+    thank_text = f"""✅ {len(lines)} کانفیگ جدید با موفقیت به بخش اهدایی اضافه شد!
+
+🙏 ممنون از همکاری شما.
+
+📊 آمار جدید کانفیگ‌های اهدایی: {total_donated} عدد
+
+سایر کاربران نیز می‌توانند از این کانفیگ‌ها استفاده کنند."""
+    
+    send_message(chat_id, thank_text)
+    
+    # ارسال پیام درخواست اهدا
+    send_donation_request(chat_id)
+
+def delayed_process(user_id, chat_id):
+    """پردازش تاخیری پیام‌های جمع‌آوری شده"""
+    if user_id in user_message_buffer:
+        messages = user_message_buffer[user_id]
+        if messages:
+            # ترکیب همه پیام‌ها
+            combined = "\n".join(messages)
+            process_donated_configs(chat_id, combined)
+        del user_message_buffer[user_id]
 
 def show_config_menu(chat_id):
-    """نمایش منوی انتخاب نوع کانفیگ"""
     keyboard = {
         "keyboard": [
             [{"text": "🎁 کانفیگ‌های اهدایی"}, {"text": "⚡ کانفیگ‌های دلتا"}],
@@ -127,8 +181,8 @@ def show_config_menu(chat_id):
 ⚡ کانفیگ‌های دلتا: {len(main_configs)} عدد
 
 📌 نحوه اهدای کانفیگ:
-برای اهدای کانفیگ به ربات، کافیست کانفیگ خود را به صورت مستقیم برای ربات ارسال کنید.
-کانفیگ شما پس از بررسی به بخش اهدایی اضافه خواهد شد.
+برای اهدای کانفیگ به ربات، کافیست کانفیگ خود را (هر خط یک کانفیگ) در یک پیام برای ربات ارسال کنید.
+کانفیگ شما پس از ذخیره به بخش اهدایی اضافه خواهد شد.
 
 برای شروع، یکی از گزینه‌های بالا را انتخاب کنید."""
     
@@ -136,7 +190,7 @@ def show_config_menu(chat_id):
 
 def main():
     last_update_id = 0
-    waiting_for_donate = {}  # دیکشنری برای نگهداری کاربرانی که منتظر دریافت کانفیگ اهدایی هستند
+    waiting_for_config_type = {}  # {'chat_id': 'donated' or 'main'}
     
     while True:
         check_time()
@@ -157,13 +211,10 @@ def main():
                 msg = update['message']
                 
                 if 'text' not in msg:
-                    # اگه پیام کانفیگ اهدایی باشه (متن نیست، مثلاً کپی پیست کرده)
-                    if msg.get('caption'):
-                        # اگه کپشن داره
-                        pass
                     continue
                 
                 chat_id = msg['chat']['id']
+                user_id = msg.get('from', {}).get('id', chat_id)
                 text = msg.get('text', '')
                 
                 # دستور start
@@ -181,7 +232,7 @@ def main():
 ⚡ کانفیگ‌های دلتا: {len(get_configs(MAIN_FILE))} عدد
 
 💝 اهدای کانفیگ:
-برای اهدای کانفیگ، کافیست کانفیگ خود را (هر خط یک کانفیگ) برای ربات ارسال کنید.
+برای اهدای کانفیگ، کافیست کانفیگ خود را (هر خط یک کانفیگ) در یک پیام برای ربات ارسال کنید.
 
 لطفاً برای ادامه، از دکمه‌های پایین صفحه استفاده کنید."""
                     
@@ -199,6 +250,10 @@ def main():
                     if result and 'result' in result:
                         message_id = result['result']['message_id']
                         pin_message(chat_id, message_id)
+                    
+                    # پاک کردن بافر این کاربر
+                    if user_id in user_message_buffer:
+                        del user_message_buffer[user_id]
                 
                 # پردازش دکمه راهنما
                 elif text == "📡 راهنما و اطلاعات":
@@ -216,9 +271,7 @@ def main():
 تعداد موجود: {len(main_configs)} عدد
 
 💝 نحوه اهدای کانفیگ:
-1. کانفیگ خود را کپی کنید (هر خط یک کانفیگ)
-2. برای ربات ارسال کنید
-3. کانفیگ شما پس از ذخیره به بخش اهدایی اضافه می‌شود
+کانفیگ‌های خود را (هر خط یک کانفیگ) در یک پیام برای ربات ارسال کنید.
 
 📊 محدودیت درخواست:
 حداکثر 50 کانفیگ در هر بار درخواست
@@ -233,16 +286,17 @@ def main():
                     donated_configs = get_configs(DONATED_FILE)
                     if donated_configs:
                         send_message(chat_id, f"🔢 تعداد کانفیگ‌های اهدایی موجود: {len(donated_configs)}\n\nچند تا کانفیگ از بخش اهدایی میخوای؟ (عدد بین 1 تا 50)")
-                        waiting_for_donate[chat_id] = 'donated'
+                        waiting_for_config_type[chat_id] = 'donated'
                     else:
                         send_message(chat_id, "❌ متاسفانه هیچ کانفیگ اهدایی موجود نیست.\n\nشما می‌توانید اولین نفری باشید که کانفیگ اهدا می‌کند!")
+                        send_donation_request(chat_id)
                 
                 # پردازش دکمه کانفیگ دلتا
                 elif text == "⚡ کانفیگ‌های دلتا":
                     main_configs = get_configs(MAIN_FILE)
                     if main_configs:
                         send_message(chat_id, f"🔢 تعداد کانفیگ‌های دلتا موجود: {len(main_configs)}\n\nچند تا کانفیگ از بخش دلتا میخوای؟ (عدد بین 1 تا 50)")
-                        waiting_for_donate[chat_id] = 'main'
+                        waiting_for_config_type[chat_id] = 'main'
                     else:
                         send_message(chat_id, "❌ متاسفانه هیچ کانفیگ دلتا موجود نیست!")
                 
@@ -250,9 +304,9 @@ def main():
                 elif text.isdigit():
                     count = int(text)
                     if 1 <= count <= 50:
-                        source = waiting_for_donate.get(chat_id, 'main')
+                        config_type = waiting_for_config_type.get(chat_id, 'main')
                         
-                        if source == 'donated':
+                        if config_type == 'donated':
                             configs = get_configs(DONATED_FILE)
                             source_name = "🎁 کانفیگ‌های اهدایی"
                         else:
@@ -261,7 +315,7 @@ def main():
                         
                         if not configs:
                             send_message(chat_id, f"❌ متاسفانه هیچ کانفیگی در {source_name} موجود نیست.")
-                            waiting_for_donate.pop(chat_id, None)
+                            waiting_for_config_type.pop(chat_id, None)
                             continue
                         
                         if count > len(configs):
@@ -271,26 +325,31 @@ def main():
                         selected = random.sample(configs, count)
                         send_configs_in_chunks(chat_id, selected, count, source_name)
                         
-                        # پاک کردن وضعیت انتظار
-                        waiting_for_donate.pop(chat_id, None)
+                        waiting_for_config_type.pop(chat_id, None)
                     else:
                         send_message(chat_id, "❌ لطفاً عددی بین 1 تا 50 وارد کنید.")
                 
-                # پردازش کانفیگ اهدایی (هر متنی که جزو دکمه‌ها و کامندها نباشه)
-                elif (text not in ["🎁 کانفیگ‌های اهدایی", "⚡ کانفیگ‌های دلتا", "📡 راهنما و اطلاعات", "/start"] 
-                      and len(text) > 10):  # احتمالاً کانفیگ هست
+                # پردازش کانفیگ اهدایی (با بافر و تاخیر)
+                elif text not in ["🎁 کانفیگ‌های اهدایی", "⚡ کانفیگ‌های دلتا", "📡 راهنما و اطلاعات", "/start"]:
                     
-                    # ذخیره کانفیگ اهدایی
-                    save_config(DONATED_FILE, text)
+                    # اضافه کردن به بافر این کاربر
+                    if user_id not in user_message_buffer:
+                        user_message_buffer[user_id] = []
                     
-                    # کامیت به گیت‌هاب
-                    git_commit_and_push(DONATED_FILE, text)
+                    user_message_buffer[user_id].append(text)
                     
-                    send_message(chat_id, "✅ کانفیگ شما با موفقیت به بخش اهدایی اضافه شد!\n\n🙏 ممنون از همکاری شما.\n\nسپس کاربران دیگر نیز می‌توانند از این کانفیگ استفاده کنند.")
+                    # اگر تایمر قبلی وجود داشت، کنسل کن
+                    if hasattr(process_donated_configs, 'timer_' + str(user_id)):
+                        getattr(process_donated_configs, 'timer_' + str(user_id)).cancel()
                     
-                    # آمار جدید
-                    total_donated = len(get_configs(DONATED_FILE))
-                    send_message(chat_id, f"📊 آمار جدید کانفیگ‌های اهدایی: {total_donated} عدد")
+                    # تنظیم تایمر جدید
+                    timer = Timer(BUFFER_TIMEOUT, delayed_process, args=[user_id, chat_id])
+                    timer.daemon = True
+                    timer.start()
+                    setattr(process_donated_configs, 'timer_' + str(user_id), timer)
+                    
+                    # پیام موقت
+                    send_message(chat_id, f"⏳ {len(user_message_buffer[user_id])} کانفیگ دریافت شد. در حال ذخیره‌سازی...")
                 
                 # هر چیز دیگه
                 else:
