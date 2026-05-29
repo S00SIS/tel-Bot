@@ -2,27 +2,36 @@ name: Telegram Proxy Bot
 
 on:
   schedule:
-    - cron: '0 */6 * * *'  # هر 6 ساعت یکبار اجرا کن
+    - cron: '0 */6 * * *'
   workflow_dispatch:
 
 jobs:
   run-bot:
     runs-on: ubuntu-latest
-    timeout-minutes: 360  # 360 دقیقه = 6 ساعت (بعدش خودش خاموش میشه)
+    timeout-minutes: 360
     
     steps:
     - name: Checkout code
       uses: actions/checkout@v4
-      
+      with:
+        fetch-depth: 0
+        token: ${{ secrets.GITHUB_TOKEN }}
+    
     - name: Set up Python
       uses: actions/setup-python@v4
       with:
         python-version: '3.9'
-        
+    
     - name: Install dependencies
       run: pip install requests
-      
+    
     - name: Run bot
       env:
         TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
       run: python bot.py
+      
+    - name: Push changes
+      run: |
+        git config --global user.name "Telegram Bot"
+        git config --global user.email "bot@telegram.com"
+        git push
