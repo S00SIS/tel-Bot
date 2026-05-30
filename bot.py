@@ -2,241 +2,413 @@ import random
 import os
 import time
 import requests
+import json
 import sys
 import math
+import subprocess
+from collections import deque
+from threading import Timer
 
 TOKEN = os.environ.get('TELEGRAM_BOT_TOKEN')
 START_TIME = time.time()
 MAX_RUNTIME = 6 * 60 * 60
 
-DONATED_FILE = 'donated.txt'
-MAIN_FILE = 'proxy.txt'
-SPOOF_FILE = 'spoof.txt'
+# مسیر فایل‌ها
+DONATED_FILE = 'donated.txt'      # کانفیگ‌های اهدایی
+MAIN_FILE = 'proxy.txt'           # کانفیگ‌های دلتا
+SPOOF_FILE = 'spoof.txt'          # کانفیگ‌های اسپوف
+
+# ذخیره پیام‌های کاربر برای پردازش گروهی
+user_message_buffer = {}
+BUFFER_TIMEOUT = 3  # 3 ثانیه صبر کن تا پیام‌های بعدی برسن
 
 def check_time():
     if time.time() - START_TIME > MAX_RUNTIME:
+        print("6 ساعت تموم شد، ربات خاموش میشه...")
         sys.exit(0)
 
-def get_configs(path):
+def get_configs(file_path):
     try:
-        with open(path, 'r') as f:
-            return [l.strip() for l in f if l.strip()]
-    except:
+        with open(file_path, 'r') as f:
+            return [line.strip() for line in f if line.strip()]
+    except FileNotFoundError:
         return []
 
-def send(chat_id, text):
+def save_multiple_configs(file_path, configs_list):
+    """ذخیره چندین کانفیگ در فایل"""
+    with open(file_path, 'a') as f:
+        for config in configs_list:
+            if config.strip():
+                f.write(config.strip() + '\n')
+
+def git_commit_and_push(file_path, count):
     try:
-        url = f"https://api.telegram.org/bot{TOKEN}/sendMessage"
-        requests.post(url, json={'chat_id': chat_id, 'text': text}, timeout=10)
-    except:
-        pass
+        subprocess.run(['git', 'config', 'user.name', 'Telegram Bot'], check=False)
+        subprocess.run(['git', 'config', 'user.email', 'bot@telegram.com'], check=False)
+        subprocess.run(['git', 'add', file_path], check=False)
+        subprocess.run(['git', 'commit', '-m', f'Add {count} donated configs'], check=False)
+        subprocess.run(['git', 'push'], check=False)
+        return True
+    except Exception as e:
+        print(f"Git error: {e}")
+        return False
+
+def send_message(chat_id, text, reply_markup=None):
+    url = f"https://api.telegram.org/bot{TOKEN}/sendMessage"
+    payload = {'chat_id': chat_id, 'text': text}
+    if reply_markup:
+        payload['reply_markup'] = json.dumps(reply_markup)
+    try:
+        response = requests.post(url, json=payload, timeout=10)
+        return response.json()
+    except Exception as e:
+        print(f"Error sending message: {e}")
+        return None
+
+def pin_message(chat_id, message_id):
+    url = f"https://api.telegram.org/bot{TOKEN}/pinChatMessage"
+    payload = {'chat_id': chat_id, 'message_id': message_id, 'disable_notification': True}
+    try:
+        requests.post(url, json=payload, timeout=10)
+    except Exception as e:
+        print(f"Error pinning message: {e}")
+
+def send_configs_in_chunks(chat_id, configs, total_count, source_name):
+    if not configs:
+        send_message(chat_id, f"❌ متاسفانه هیچ کانفیگی در بخش {source_name} موجود نیست.")
+        return
+    
+    chunk_size = 10
+    num_chunks = math.ceil(len(configs) / chunk_size)
+    
+    send_message(chat_id, f"📦 منبع: {source_name}\n✅ {len(configs)} کانفیگ در حال ارسال...")
+    time.sleep(0.5)
+    
+    for i in range(num_chunks):
+        start = i * chunk_size
+        end = start + chunk_size
+        chunk = configs[start:end]
+        
+        if num_chunks == 1:
+            message = "\n".join(chunk)
+        else:
+            if i == 0:
+                message = f"📦 بخش {i+1} از {num_chunks} (کانفیگ {start+1} تا {min(end, total_count)}):\n\n" + "\n".join(chunk)
+            else:
+                message = f"\n📦 بخش {i+1} از {num_chunks} (کانفیگ {start+1} تا {min(end, total_count)}):\n\n" + "\n".join(chunk)
+        
+        send_message(chat_id, message)
+        time.sleep(0.5)
+    
+    send_message(chat_id, f"✨ ارسال {len(configs)} کانفیگ از {source_name} به پایان رسید.")
+    
+    # ارسال پیام درخواست اهدا (فقط برای بخش‌های غیر اسپوف)
+    if source_name != "🎭 کانفیگ‌های اسپوف":
+        send_donation_request(chat_id)
+
+def send_donation_request(chat_id):
+    """ارسال پیام درخواست اهدای کانفیگ"""
+    donation_text = """💝 کمک به دسترسی آزاد به اینترنت
+
+اگر شما ساب لینک‌ها یا کانفیگ‌های سالمی را تست می‌کنید، لطفاً آنها را به این ربات اهدا کنید.
+
+📌 نحوه اهدا:
+1️⃣ روی دکمه "💝 اهدای کانفیگ" کلیک کنید
+2️⃣ کانفیگ‌های خود را (هر خط یک کانفیگ) در یک پیام برای ربات ارسال کنید
+
+✅ با اهدای کانفیگ‌های سالم، به دیگران در دسترسی آزاد به اینترنت کمک می‌کنید.
+
+🙏 ممنون از همکاری شما"""
+    
+    send_message(chat_id, donation_text)
+
+def show_donation_mode(chat_id):
+    """نمایش پیام برای دریافت کانفیگ اهدایی"""
+    keyboard = {
+        "keyboard": [
+            [{"text": "🎁 کانفیگ‌های اهدایی"}, {"text": "⚡ کانفیگ‌های دلتا"}],
+            [{"text": "🎭 کانفیگ‌های اسپوف"}, {"text": "💝 اهدای کانفیگ"}],
+            [{"text": "📡 راهنما و اطلاعات"}]
+        ],
+        "resize_keyboard": True,
+        "one_time_keyboard": False,
+        "persistent_keyboard": True  # کلید ماندگار برای همیشه باز موندن کشو
+    }
+    
+    send_message(chat_id, "🔽 لطفاً کانفیگ‌های خود را (هر خط یک کانفیگ) در همین پیام ارسال کنید:", reply_markup=keyboard)
+
+def process_donated_configs(chat_id, configs_text):
+    """پردازش کانفیگ‌های اهدایی با تاخیر"""
+    lines = [line.strip() for line in configs_text.split('\n') if line.strip() and not line.strip().startswith('/')]
+    
+    if not lines:
+        return
+    
+    save_multiple_configs(DONATED_FILE, lines)
+    git_commit_and_push(DONATED_FILE, len(lines))
+    total_donated = len(get_configs(DONATED_FILE))
+    
+    thank_text = f"""✅ {len(lines)} کانفیگ جدید با موفقیت به بخش اهدایی اضافه شد!
+
+🙏 ممنون از همکاری شما.
+
+📊 آمار جدید کانفیگ‌های اهدایی: {total_donated} عدد
+
+سایر کاربران نیز می‌توانند از این کانفیگ‌ها استفاده کنند."""
+    
+    send_message(chat_id, thank_text)
+    send_donation_request(chat_id)
+    
+    # برگردوندن منوی اصلی
+    time.sleep(1)
+    show_config_menu(chat_id)
+
+def delayed_process(user_id, chat_id):
+    """پردازش تاخیری پیام‌های جمع‌آوری شده"""
+    if user_id in user_message_buffer:
+        messages = user_message_buffer[user_id]
+        if messages:
+            combined = "\n".join(messages)
+            process_donated_configs(chat_id, combined)
+        del user_message_buffer[user_id]
+
+def show_config_menu(chat_id):
+    """نمایش منوی اصلی با کشوی همیشه باز"""
+    keyboard = {
+        "keyboard": [
+            [{"text": "🎁 کانفیگ‌های اهدایی"}, {"text": "⚡ کانفیگ‌های دلتا"}],
+            [{"text": "🎭 کانفیگ‌های اسپوف"}, {"text": "💝 اهدای کانفیگ"}],
+            [{"text": "📡 راهنما و اطلاعات"}]
+        ],
+        "resize_keyboard": True,
+        "one_time_keyboard": False,
+        "persistent_keyboard": True  # کلید ماندگار برای همیشه باز موندن کشو
+    }
+    
+    main_configs = get_configs(MAIN_FILE)
+    donated_configs = get_configs(DONATED_FILE)
+    spoof_configs = get_configs(SPOOF_FILE)
+    
+    menu_text = f"""🎯 منوی اصلی ربات کانفیگ
+
+لطفاً نوع کانفیگ مورد نظر خود را انتخاب کنید:
+
+🎁 کانفیگ‌های اهدایی: {len(donated_configs)} عدد
+⚡ کانفیگ‌های دلتا: {len(main_configs)} عدد
+🎭 کانفیگ‌های اسپوف: {len(spoof_configs)} عدد
+
+📌 نحوه اهدای کانفیگ:
+روی دکمه "💝 اهدای کانفیگ" کلیک کنید و سپس کانفیگ‌های خود را ارسال کنید.
+
+برای شروع، یکی از گزینه‌های بالا را انتخاب کنید."""
+    
+    send_message(chat_id, menu_text, reply_markup=keyboard)
 
 def main():
-    last_id = 0
-    state = {}  # {chat_id: 'waiting_count' or 'waiting_donate'}
-    config_type = {}  # {chat_id: 'main' or 'donated' or 'spoof'}
+    last_update_id = 0
+    waiting_for_config_type = {}  # {'chat_id': 'donated' or 'main' or 'spoof'}
+    waiting_for_donation = set()  # کاربرانی که منتظر دریافت کانفیگ اهدایی هستند
     
     while True:
         check_time()
+        
         try:
             url = f"https://api.telegram.org/bot{TOKEN}/getUpdates"
-            res = requests.get(url, params={'timeout': 25, 'offset': last_id + 1}, timeout=30)
-            data = res.json()
+            params = {'timeout': 30, 'offset': last_update_id + 1}
+            response = requests.get(url, params=params, timeout=35)
+            updates = response.json().get('result', [])
             
-            for upd in data.get('result', []):
-                last_id = upd['update_id']
-                msg = upd.get('message')
-                if not msg or 'text' not in msg:
+            for update in updates:
+                check_time()
+                last_update_id = update['update_id']
+                
+                if 'message' not in update:
                     continue
                 
-                cid = msg['chat']['id']
-                txt = msg['text']
-                name = msg.get('from', {}).get('first_name', 'کاربر')
+                msg = update['message']
                 
-                # ===== START =====
-                if txt == '/start':
-                    keyboard = {
-                        "keyboard": [
-                            ["🎁 اهدایی", "⚡ دلتا"],
-                            ["🎭 اسپوف", "💝 اهدا"]
-                        ],
-                        "resize_keyboard": True,
-                        "persistent_keyboard": True
-                    }
-                    welcome = f"""🎯 ربات کانفیگ
-
-🎁 اهدایی: {len(get_configs(DONATED_FILE))}
-⚡ دلتا: {len(get_configs(MAIN_FILE))}
-🎭 اسپوف: {len(get_configs(SPOOF_FILE))}
-
-یکی رو انتخاب کن:"""
-                    send(cid, welcome)
-                    try:
-                        requests.post(f"https://api.telegram.org/bot{TOKEN}/sendMessage", 
-                                    json={'chat_id': cid, 'text': welcome, 'reply_markup': keyboard}, timeout=10)
-                    except:
-                        pass
-                    state.pop(cid, None)
-                    config_type.pop(cid, None)
-                    continue
-                
-                # ===== دکمه اهدا =====
-                if txt == "💝 اهدا":
-                    send(cid, "کانفیگ‌هات رو بفرست (هر خط یکی):")
-                    state[cid] = 'waiting_donate'
-                    continue
-                
-                # ===== دکمه اهدایی =====
-                if txt == "🎁 اهدایی":
-                    cfg = get_configs(DONATED_FILE)
-                    if cfg:
-                        send(cid, f"چند تا؟ (1-{min(100, len(cfg))})\nموجودی: {len(cfg)}")
-                        state[cid] = 'waiting_count'
-                        config_type[cid] = 'donated'
-                    else:
-                        send(cid, "کانفیگ اهدایی نداریم. اولین نفری باش که اهدا میکنی!")
-                    continue
-                
-                # ===== دکمه دلتا =====
-                if txt == "⚡ دلتا":
-                    cfg = get_configs(MAIN_FILE)
-                    if cfg:
-                        send(cid, f"چند تا؟ (1-{min(100, len(cfg))})\nموجودی: {len(cfg)}")
-                        state[cid] = 'waiting_count'
-                        config_type[cid] = 'main'
-                    else:
-                        send(cid, "کانفیگ دلتا نداریم!")
-                    continue
-                
-                # ===== دکمه اسپوف =====
-                if txt == "🎭 اسپوف":
-                    cfg = get_configs(SPOOF_FILE)
-                    if cfg:
-                        send(cid, f"چند تا؟ (1-{min(100, len(cfg))})\nموجودی: {len(cfg)}")
-                        state[cid] = 'waiting_count'
-                        config_type[cid] = 'spoof'
-                    else:
-                        send(cid, "کانفیگ اسپوف نداریم!")
-                    continue
-                
-                # ===== دریافت تعداد =====
-                if state.get(cid) == 'waiting_count' and txt.isdigit():
-                    count = int(txt)
-                    if count < 1 or count > 100:
-                        send(cid, "عدد بین 1 تا 100 باشه!")
-                        state.pop(cid, None)
-                        continue
-                    
-                    ct = config_type.get(cid, 'main')
-                    if ct == 'donated':
-                        cfgs = get_configs(DONATED_FILE)
-                        src = "🎁 اهدایی"
-                    elif ct == 'spoof':
-                        cfgs = get_configs(SPOOF_FILE)
-                        src = "🎭 اسپوف"
-                    else:
-                        cfgs = get_configs(MAIN_FILE)
-                        src = "⚡ دلتا"
-                    
-                    if not cfgs:
-                        send(cid, f"{src} کانفیگی نداره!")
-                        state.pop(cid, None)
-                        continue
-                    
-                    if count > len(cfgs):
-                        count = len(cfgs)
-                        send(cid, f"⚠️ فقط {count} تا موجود بود")
-                    
-                    selected = random.sample(cfgs, count)
-                    
-                    # ارسال گروهی 10 تایی
-                    all_cfgs = []
-                    for i in range(0, len(selected), 10):
-                        chunk = selected[i:i+10]
-                        send(cid, "\n".join(chunk))
-                        all_cfgs.extend(chunk)
-                        time.sleep(0.3)
-                    
-                    # پیام پایان
-                    send(cid, f"✨ ارسال {len(selected)} کانفیگ از {src} به پایان رسید.")
-                    time.sleep(0.3)
-                    
-                    # پیام کپی همه (همون کانفیگ‌ها بدون هیچ توضیح اضافه)
-                    send(cid, "\n".join(all_cfgs))
-                    time.sleep(0.3)
-                    
-                    # پیام درخواست اهدا
-                    if src != "🎭 اسپوف":
-                        send(cid, "💝 اگه کانفیگ سالم داری، اهدا کن\nروی دکمه 💝 اهدا بزن")
-                    
-                    state.pop(cid, None)
-                    config_type.pop(cid, None)
-                    continue
-                
-                # ===== دریافت کانفیگ اهدایی =====
-                if state.get(cid) == 'waiting_donate':
-                    lines = [l.strip() for l in txt.split('\n') if l.strip()]
-                    if lines:
-                        # ذخیره
-                        with open(DONATED_FILE, 'a') as f:
-                            for l in lines:
-                                f.write(l + '\n')
-                        # کامیت
-                        try:
-                            import subprocess
-                            subprocess.run(['git', 'add', DONATED_FILE], capture_output=True)
-                            subprocess.run(['git', 'commit', '-m', f'add {len(lines)} configs from {name}'], capture_output=True)
-                            subprocess.run(['git', 'push'], capture_output=True)
-                        except:
-                            pass
-                        
-                        total = len(get_configs(DONATED_FILE))
-                        send(cid, f"✅ {len(lines)} تا کانفیگ اهدا شد! ممنون 🙏\nمجموع اهدایی: {total}")
-                        
-                        # اعلام به همه (ساده)
-                        try:
-                            with open('users.txt', 'r') as f:
-                                users = [u.strip().split('|')[0] for u in f if u.strip()]
-                            for u in users:
-                                try:
-                                    send(u, f"🎉 {name} جان! {len(lines)} تا کانفیگ اهدا کرد! دمش گرم 🌟")
-                                    time.sleep(0.1)
-                                except:
-                                    pass
-                        except:
-                            pass
-                        
-                        # ذخیره کاربر
-                        try:
-                            with open('users.txt', 'a') as f:
-                                f.write(f"{cid}|{name}\n")
-                        except:
-                            pass
-                    
-                    state.pop(cid, None)
-                    # برگردوندن منو
-                    keyboard = {
-                        "keyboard": [
-                            ["🎁 اهدایی", "⚡ دلتا"],
-                            ["🎭 اسپوف", "💝 اهدا"]
-                        ],
-                        "resize_keyboard": True,
-                        "persistent_keyboard": True
-                    }
-                    try:
-                        requests.post(f"https://api.telegram.org/bot{TOKEN}/sendMessage", 
-                                    json={'chat_id': cid, 'text': "منوی اصلی:", 'reply_markup': keyboard}, timeout=10)
-                    except:
+                if 'text' not in msg:
+                    # اگه پیام کانفیگ اهدایی باشه ولی متن نداشته باشه
+                    if chat_id in waiting_for_donation:
+                        # اینجا میتونیم کپشن رو چک کنیم ولی فعلاً ساده میگیریم
                         pass
                     continue
                 
-                # ===== هرچیز دیگه =====
-                if txt not in ["🎁 اهدایی", "⚡ دلتا", "🎭 اسپوف", "💝 اهدا", "/start"]:
-                    send(cid, "از دکمه‌ها استفاده کن یا عدد بفرست")
+                chat_id = msg['chat']['id']
+                user_id = msg.get('from', {}).get('id', chat_id)
+                text = msg.get('text', '')
+                
+                # دستور start
+                if text == '/start':
+                    welcome_text = f"""🎯 به ربات کانفیگ خوش آمدید!
+
+این ربات به شما امکان دریافت کانفیگ‌های دلخواه را می‌دهد.
+
+📌 نحوه استفاده:
+✅ از طریق دکمه‌های پایین صفحه نوع کانفیگ خود را انتخاب کنید
+✅ سپس تعداد کانفیگ مورد نیاز را وارد کنید (عدد بین 1 تا 100)
+
+📊 آمار فعلی:
+🎁 کانفیگ‌های اهدایی: {len(get_configs(DONATED_FILE))} عدد
+⚡ کانفیگ‌های دلتا: {len(get_configs(MAIN_FILE))} عدد
+🎭 کانفیگ‌های اسپوف: {len(get_configs(SPOOF_FILE))} عدد
+
+💝 اهدای کانفیگ:
+روی دکمه "💝 اهدای کانفیگ" کلیک کنید و سپس کانفیگ‌های خود را ارسال کنید.
+
+لطفاً برای ادامه، از دکمه‌های پایین صفحه استفاده کنید."""
+                    
+                    reply_keyboard = {
+                        "keyboard": [
+                            [{"text": "🎁 کانفیگ‌های اهدایی"}, {"text": "⚡ کانفیگ‌های دلتا"}],
+                            [{"text": "🎭 کانفیگ‌های اسپوف"}, {"text": "💝 اهدای کانفیگ"}],
+                            [{"text": "📡 راهنما و اطلاعات"}]
+                        ],
+                        "resize_keyboard": True,
+                        "one_time_keyboard": False,
+                        "persistent_keyboard": True
+                    }
+                    
+                    result = send_message(chat_id, welcome_text, reply_markup=reply_keyboard)
+                    
+                    if result and 'result' in result:
+                        message_id = result['result']['message_id']
+                        pin_message(chat_id, message_id)
+                    
+                    # پاک کردن وضعیت‌های این کاربر
+                    if user_id in user_message_buffer:
+                        del user_message_buffer[user_id]
+                    waiting_for_config_type.pop(chat_id, None)
+                    waiting_for_donation.discard(chat_id)
+                
+                # پردازش دکمه اهدای کانفیگ
+                elif text == "💝 اهدای کانفیگ":
+                    waiting_for_donation.add(chat_id)
+                    show_donation_mode(chat_id)
+                
+                # پردازش دکمه راهنما
+                elif text == "📡 راهنما و اطلاعات":
+                    main_configs = get_configs(MAIN_FILE)
+                    donated_configs = get_configs(DONATED_FILE)
+                    spoof_configs = get_configs(SPOOF_FILE)
+                    
+                    help_text = f"""📚 راهنمای استفاده از ربات
+
+🎁 کانفیگ‌های اهدایی:
+کانفیگ‌هایی که کاربران دیگر به ربات اهدا کرده‌اند.
+تعداد موجود: {len(donated_configs)} عدد
+
+⚡ کانفیگ‌های دلتا:
+کانفیگ‌های اصلی و پایدار ربات.
+تعداد موجود: {len(main_configs)} عدد
+
+🎭 کانفیگ‌های اسپوف:
+کانفیگ‌های ویژه اسپوف (بدون قابلیت اهدا).
+تعداد موجود: {len(spoof_configs)} عدد
+
+💝 نحوه اهدای کانفیگ:
+1. روی دکمه "💝 اهدای کانفیگ" کلیک کنید
+2. کانفیگ‌های خود را (هر خط یک کانفیگ) در یک پیام ارسال کنید
+
+📊 محدودیت درخواست:
+حداکثر 100 کانفیگ در هر بار درخواست
+
+⚠️ توجه:
+کانفیگ‌های اهدایی توسط کاربران ارسال می‌شوند و ممکن است پایدار نباشند."""
+                    
+                    send_message(chat_id, help_text)
+                
+                # پردازش دکمه کانفیگ اهدایی
+                elif text == "🎁 کانفیگ‌های اهدایی":
+                    donated_configs = get_configs(DONATED_FILE)
+                    if donated_configs:
+                        send_message(chat_id, f"🔢 تعداد کانفیگ‌های اهدایی موجود: {len(donated_configs)}\n\nچند تا کانفیگ از بخش اهدایی میخوای؟ (عدد بین 1 تا 100)")
+                        waiting_for_config_type[chat_id] = 'donated'
+                        waiting_for_donation.discard(chat_id)
+                    else:
+                        send_message(chat_id, "❌ متاسفانه هیچ کانفیگ اهدایی موجود نیست.\n\nشما می‌توانید اولین نفری باشید که کانفیگ اهدا می‌کند!")
+                        send_donation_request(chat_id)
+                
+                # پردازش دکمه کانفیگ دلتا
+                elif text == "⚡ کانفیگ‌های دلتا":
+                    main_configs = get_configs(MAIN_FILE)
+                    if main_configs:
+                        send_message(chat_id, f"🔢 تعداد کانفیگ‌های دلتا موجود: {len(main_configs)}\n\nچند تا کانفیگ از بخش دلتا میخوای؟ (عدد بین 1 تا 100)")
+                        waiting_for_config_type[chat_id] = 'main'
+                        waiting_for_donation.discard(chat_id)
+                    else:
+                        send_message(chat_id, "❌ متاسفانه هیچ کانفیگ دلتا موجود نیست!")
+                
+                # پردازش دکمه کانفیگ اسپوف
+                elif text == "🎭 کانفیگ‌های اسپوف":
+                    spoof_configs = get_configs(SPOOF_FILE)
+                    if spoof_configs:
+                        send_message(chat_id, f"🔢 تعداد کانفیگ‌های اسپوف موجود: {len(spoof_configs)}\n\nچند تا کانفیگ از بخش اسپوف میخوای؟ (عدد بین 1 تا 100)")
+                        waiting_for_config_type[chat_id] = 'spoof'
+                        waiting_for_donation.discard(chat_id)
+                    else:
+                        send_message(chat_id, "❌ متاسفانه هیچ کانفیگ اسپوف موجود نیست!")
+                
+                # پردازش عدد (تعداد کانفیگ)
+                elif text.isdigit():
+                    count = int(text)
+                    if 1 <= count <= 100:
+                        config_type = waiting_for_config_type.get(chat_id, 'main')
+                        
+                        if config_type == 'donated':
+                            configs = get_configs(DONATED_FILE)
+                            source_name = "🎁 کانفیگ‌های اهدایی"
+                        elif config_type == 'spoof':
+                            configs = get_configs(SPOOF_FILE)
+                            source_name = "🎭 کانفیگ‌های اسپوف"
+                        else:
+                            configs = get_configs(MAIN_FILE)
+                            source_name = "⚡ کانفیگ‌های دلتا"
+                        
+                        if not configs:
+                            send_message(chat_id, f"❌ متاسفانه هیچ کانفیگی در {source_name} موجود نیست.")
+                            waiting_for_config_type.pop(chat_id, None)
+                            continue
+                        
+                        if count > len(configs):
+                            send_message(chat_id, f"⚠️ فقط {len(configs)} کانفیگ در {source_name} موجود است. همین تعداد ارسال می‌شود.")
+                            count = len(configs)
+                        
+                        selected = random.sample(configs, count)
+                        send_configs_in_chunks(chat_id, selected, count, source_name)
+                        
+                        waiting_for_config_type.pop(chat_id, None)
+                    else:
+                        send_message(chat_id, "❌ لطفاً عددی بین 1 تا 100 وارد کنید.")
+                
+                # پردازش کانفیگ اهدایی (فقط اگه کاربر در حالت اهدا باشه)
+                elif chat_id in waiting_for_donation and text not in ["🎁 کانفیگ‌های اهدایی", "⚡ کانفیگ‌های دلتا", "🎭 کانفیگ‌های اسپوف", "💝 اهدای کانفیگ", "📡 راهنما و اطلاعات", "/start"]:
+                    
+                    if user_id not in user_message_buffer:
+                        user_message_buffer[user_id] = []
+                    
+                    user_message_buffer[user_id].append(text)
+                    
+                    if hasattr(process_donated_configs, 'timer_' + str(user_id)):
+                        getattr(process_donated_configs, 'timer_' + str(user_id)).cancel()
+                    
+                    timer = Timer(BUFFER_TIMEOUT, delayed_process, args=[user_id, chat_id])
+                    timer.daemon = True
+                    timer.start()
+                    setattr(process_donated_configs, 'timer_' + str(user_id), timer)
+                    
+                    send_message(chat_id, f"⏳ {len(user_message_buffer[user_id])} کانفیگ دریافت شد. در حال ذخیره‌سازی...")
+                
+                # هر چیز دیگه
+                else:
+                    send_message(chat_id, "❌ گزینه نامعتبر!\n\nلطفاً از دکمه‌های پایین صفحه استفاده کنید یا یک عدد معتبر بین 1 تا 100 وارد کنید.")
+                    # برگردوندن منوی اصلی
+                    show_config_menu(chat_id)
             
             time.sleep(1)
+            
         except Exception as e:
-            print(e)
+            print(f"Error: {e}")
             time.sleep(5)
 
 if __name__ == "__main__":
