@@ -22,6 +22,9 @@ SPOOF_FILE = 'spoof.txt'          # کانفیگ‌های اسپوف
 user_message_buffer = {}
 BUFFER_TIMEOUT = 3  # 3 ثانیه صبر کن تا پیام‌های بعدی برسن
 
+# ذخیره کاربران و نامشان
+users_db = {}  # {'chat_id': {'first_name': 'علی', 'last_name': 'رضایی'}}
+
 def check_time():
     if time.time() - START_TIME > MAX_RUNTIME:
         print("6 ساعت تموم شد، ربات خاموش میشه...")
@@ -65,6 +68,15 @@ def send_message(chat_id, text, reply_markup=None):
         print(f"Error sending message: {e}")
         return None
 
+def send_message_to_all_users(text):
+    """ارسال پیام به همه کاربران"""
+    for chat_id in users_db.keys():
+        try:
+            send_message(chat_id, text)
+            time.sleep(0.1)  # جلوگیری از محدودیت
+        except Exception as e:
+            print(f"Error sending to {chat_id}: {e}")
+
 def pin_message(chat_id, message_id):
     url = f"https://api.telegram.org/bot{TOKEN}/pinChatMessage"
     payload = {'chat_id': chat_id, 'message_id': message_id, 'disable_notification': True}
@@ -84,6 +96,8 @@ def send_configs_in_chunks(chat_id, configs, total_count, source_name):
     send_message(chat_id, f"📦 منبع: {source_name}\n✅ {len(configs)} کانفیگ در حال ارسال...")
     time.sleep(0.5)
     
+    all_configs_text = []  # ذخیره همه کانفیگ‌ها برای کپی کردن
+    
     for i in range(num_chunks):
         start = i * chunk_size
         end = start + chunk_size
@@ -98,7 +112,29 @@ def send_configs_in_chunks(chat_id, configs, total_count, source_name):
                 message = f"\n📦 بخش {i+1} از {num_chunks} (کانفیگ {start+1} تا {min(end, total_count)}):\n\n" + "\n".join(chunk)
         
         send_message(chat_id, message)
+        all_configs_text.extend(chunk)  # اضافه کردن به لیست کلی
         time.sleep(0.5)
+    
+    # ارسال پیام حاوی همه کانفیگ‌ها برای کپی کردن
+    copy_text = "📋 همه کانفیگ‌های درخواستی شما (برای کپی کردن):\n\n" + "\n".join(all_configs_text)
+    
+    # اگه طول پیام خیلی زیاد بود، تکه تکه کن
+    if len(copy_text) > 4000:
+        copy_chunks = []
+        current_chunk = "📋 همه کانفیگ‌های درخواستی شما (برای کپی کردن):\n\n"
+        for cfg in all_configs_text:
+            if len(current_chunk) + len(cfg) + 1 > 4000:
+                copy_chunks.append(current_chunk)
+                current_chunk = ""
+            current_chunk += cfg + "\n"
+        if current_chunk:
+            copy_chunks.append(current_chunk)
+        
+        for chunk in copy_chunks:
+            send_message(chat_id, chunk)
+            time.sleep(0.5)
+    else:
+        send_message(chat_id, copy_text)
     
     send_message(chat_id, f"✨ ارسال {len(configs)} کانفیگ از {source_name} به پایان رسید.")
     
@@ -132,18 +168,59 @@ def show_donation_mode(chat_id):
         ],
         "resize_keyboard": True,
         "one_time_keyboard": False,
-        "persistent_keyboard": True  # کلید ماندگار برای همیشه باز موندن کشو
+        "persistent_keyboard": True
     }
     
     send_message(chat_id, "🔽 لطفاً کانفیگ‌های خود را (هر خط یک کانفیگ) در همین پیام ارسال کنید:", reply_markup=keyboard)
 
-def process_donated_configs(chat_id, configs_text):
+def get_user_full_name(update):
+    """گرفتن نام کامل کاربر"""
+    user = update.get('message', {}).get('from', {})
+    first_name = user.get('first_name', '')
+    last_name = user.get('last_name', '')
+    username = user.get('username', '')
+    
+    if first_name and last_name:
+        return f"{first_name} {last_name}"
+    elif first_name:
+        return first_name
+    elif username:
+        return f"@{username}"
+    else:
+        return "یک کاربر"
+
+def announce_donation(chat_id, donor_name, count):
+    """اعلام اهدای کانفیگ به همه کاربران"""
+    announcement = f"""🎉 بنازم بنازم {donor_name} جان! 🎉
+
+🙏 {count} تا کانفیگ جدید اهدا کرد!
+دمش واقعاً گرم 🌟
+
+به امید دسترسی آزاد برای همه! 🔓🌍"""
+    
+    # ارسال به همه کاربران
+    send_message_to_all_users(announcement)
+    
+    # ارسال یک تشکر ویژه به اهداکننده
+    thanks_text = f"""🔥 آفرین {donor_name} جان!
+    
+به خاطر این {count} کانفیگی که اهدا کردی، واقعاً دمت گرم!
+
+💪 با این کارت به خیلی از کاربرها کمک کردی تا به اینترنت آزاد دسترسی داشته باشن.
+
+🙌 بازم ممنون از همت بلندت!"""
+    
+    send_message(chat_id, thanks_text)
+
+def process_donated_configs(chat_id, configs_text, donor_name):
     """پردازش کانفیگ‌های اهدایی با تاخیر"""
     lines = [line.strip() for line in configs_text.split('\n') if line.strip() and not line.strip().startswith('/')]
     
     if not lines:
         return
     
+    # ذخیره در فایل
+    old_count = len(get_configs(DONATED_FILE))
     save_multiple_configs(DONATED_FILE, lines)
     git_commit_and_push(DONATED_FILE, len(lines))
     total_donated = len(get_configs(DONATED_FILE))
@@ -157,19 +234,23 @@ def process_donated_configs(chat_id, configs_text):
 سایر کاربران نیز می‌توانند از این کانفیگ‌ها استفاده کنند."""
     
     send_message(chat_id, thank_text)
+    
+    # اعلام به همه کاربران
+    announce_donation(chat_id, donor_name, len(lines))
+    
     send_donation_request(chat_id)
     
     # برگردوندن منوی اصلی
     time.sleep(1)
     show_config_menu(chat_id)
 
-def delayed_process(user_id, chat_id):
+def delayed_process(user_id, chat_id, donor_name):
     """پردازش تاخیری پیام‌های جمع‌آوری شده"""
     if user_id in user_message_buffer:
         messages = user_message_buffer[user_id]
         if messages:
             combined = "\n".join(messages)
-            process_donated_configs(chat_id, combined)
+            process_donated_configs(chat_id, combined, donor_name)
         del user_message_buffer[user_id]
 
 def show_config_menu(chat_id):
@@ -182,7 +263,7 @@ def show_config_menu(chat_id):
         ],
         "resize_keyboard": True,
         "one_time_keyboard": False,
-        "persistent_keyboard": True  # کلید ماندگار برای همیشه باز موندن کشو
+        "persistent_keyboard": True
     }
     
     main_configs = get_configs(MAIN_FILE)
@@ -228,15 +309,23 @@ def main():
                 msg = update['message']
                 
                 if 'text' not in msg:
-                    # اگه پیام کانفیگ اهدایی باشه ولی متن نداشته باشه
-                    if chat_id in waiting_for_donation:
-                        # اینجا میتونیم کپشن رو چک کنیم ولی فعلاً ساده میگیریم
-                        pass
                     continue
                 
                 chat_id = msg['chat']['id']
                 user_id = msg.get('from', {}).get('id', chat_id)
                 text = msg.get('text', '')
+                
+                # ذخیره اطلاعات کاربر
+                if chat_id not in users_db:
+                    user = msg.get('from', {})
+                    users_db[chat_id] = {
+                        'first_name': user.get('first_name', ''),
+                        'last_name': user.get('last_name', ''),
+                        'username': user.get('username', '')
+                    }
+                
+                # گرفتن نام اهداکننده
+                donor_name = get_user_full_name(update)
                 
                 # دستور start
                 if text == '/start':
@@ -392,7 +481,7 @@ def main():
                     if hasattr(process_donated_configs, 'timer_' + str(user_id)):
                         getattr(process_donated_configs, 'timer_' + str(user_id)).cancel()
                     
-                    timer = Timer(BUFFER_TIMEOUT, delayed_process, args=[user_id, chat_id])
+                    timer = Timer(BUFFER_TIMEOUT, delayed_process, args=[user_id, chat_id, donor_name])
                     timer.daemon = True
                     timer.start()
                     setattr(process_donated_configs, 'timer_' + str(user_id), timer)
