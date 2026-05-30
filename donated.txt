@@ -224,3 +224,14 @@ ss://Y2hhY2hhMjAtaWV0Zi1wb2x5MTMwNTpDSmpWSXZITnFickFtVzNI@4.168.201.
 vless://301d514e-4aa0-47b0-ba44-a0cb891cd52f@151.242.191.161:443?encryption=none&fp=chrome&pbk=OZVjfQBboTDTBw0baMFqzVPsVUI4FNQmspTEb0b0zW4&security=reality&sid=a1b2c3d4&sni=www.samsung.com&type=tcp#201.%20%F0%9F%87%B7%F0%9F%87%B4%20Romania
 https://raw.githubusercontent.com/ShadowException/VPN/refs/heads/main/configs/VPN-cat
 https://raw.githubusercontent.com/Efration/ZerondOne/refs/heads/main/ZerondOne.txt
+📦 بخش 1 از 5 (کانفیگ 1 تا 10):
+vless://ef23616d-8a9d-4b22-b2f5-9bda864de179@198.41.208.22:2095?encryption=none&security=none&type=ws&host=index.arcane509.workers.dev&path=%2Fripbdigi5hdb#%40DeltaKroneckerGithub
+vless://a3eb4c35-c1df-4448-968c-f6229cba9de0@probabblynot.fazelextremeisreal.com:29870?encryption=none&security=reality&sni=www.refersion.com&fp=chrome&pbk=cWrLzTqWRYMQq8vsgN7rHtUxrDdqxDLNEWAuo_eXlRU&sid=821863f0&type=tcp&headerType=none#%40DeltaKroneckerGithub_V2ray_477
+trojan://8r%3C%5B9%27l6hAO%238ZQi@104.20.5.134:2096?security=tls&sni=Koma-YT.PAGeS.Dev&insecure=0&allowInsecure=0&type=tcp&headerType=none#%40DeltaKroneckerGithub_V2ray_3555
+vless://ef23616d-8a9d-4b22-b2f5-9bda864de179@172.67.155.231:2095?encryption=none&security=none&type=ws&host=index.arcane509.workers.dev&path=%2Fpm1awvw769za#%40DeltaKroneckerGithub
+trojan://fa050497-fc2a-45ee-89c0-96670c4ecb65@104.21.63.135:443?security=tls&sni=Rrr4.8906004.xYZ&insecure=0&allowInsecure=0&type=tcp&headerType=none#%40DeltaKroneckerGithub_V2ray_3035
+trojan://humanity@188.114.98.0:443?security=tls&sni=www.calmlunch.com&insecure=0&allowInsecure=0&type=ws&host=www.calmlunch.com&path=%2Fassignment#%40DeltaKroneckerGithub
+trojan://humanity@188.114.99.0:443?security=tls&sni=www.gossipglove.com&insecure=0&allowInsecure=0&type=ws&host=www.gossipglove.com&path=%2Fassignment#%40DeltaKroneckerGithub
+ss://YWVzLTI1Ni1jZmI6cXdlclJFV1FAQA@185.189.160.105:41632?#%40DeltaKroneckerGithub_V2ray_1763
+trojan://736cd94d-7b94-3e44-8106-3419f64eaf09@60.250.152.208:3462?security=tls&sni=45.32.28.232&insecure=0&allowInsecure=0&type=tcp&headerType=none#%40DeltaKroneckerGithub_V2ray_3369
+vless://ba49d874-fe02-465d-82d3-ed981dc7694f@www.speedtest.net:443?encryption=none&security=tls&sni=O94yv7LIF0-AnXisD9EFEhVVS7mxN6Bh.Z-UlE-iKA-D-E-ne-k-e.wORkers.dEv&fp=chrome&alpn=http%2F1.1&insecure=0&allowInsecure=0&type=ws&host=o94yv7lif0-anxisd9efehvvs7mxn6bh.z-ule-ika-d-e-ne-k-e.workers.dev&path=%2F#%40DeltaKroneckerGithub
